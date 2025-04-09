@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import START, END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.language_models import BaseLanguageModel
 import operator
 from typing import  Annotated
 from langgraph.graph import MessagesState
@@ -107,7 +108,6 @@ def should_continue(state: GenerateAnalystsState):
     # Otherwise end
     return END
 
-from langchain_core.language_models import BaseLanguageModel
 
 class InterviewState(MessagesState):
     llm: BaseLanguageModel # LLM to use
@@ -326,7 +326,7 @@ def initiate_all_interviews(state: ResearchGraphState):
     # Otherwise kick off interviews in parallel via Send() API
     else:
         topic = state["topic"]
-        return [Send("conduct_interview", {"analyst": analyst,
+        return [Send("conduct_interview", {"llm": llm, "analyst": analyst,
                                            "messages": [HumanMessage(
                                                content=f"So you said you were writing an article on {topic}?"
                                            )
@@ -400,11 +400,13 @@ def finalize_report(state: ResearchGraphState):
     return {"final_report": final_report}
 
 # Add nodes and edges
+"""
 research_state: ResearchGraphState = {
     # ... other initial state values
     "llm": llm,
     # ...
 }
+"""
 builder = StateGraph(ResearchGraphState)
 builder.add_node("create_analysts", create_analysts)
 builder.add_node("human_feedback", human_feedback)

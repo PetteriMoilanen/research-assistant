@@ -60,6 +60,7 @@ class Perspectives(BaseModel):
     )
 
 class GenerateAnalystsState(TypedDict):
+    llm: BaseLanguageModel
     topic: str # Research topic
     max_analysts: int # Number of analysts
     human_analyst_feedback: str # Human feedback
@@ -106,7 +107,10 @@ def should_continue(state: GenerateAnalystsState):
     # Otherwise end
     return END
 
+from langchain_core.language_models import BaseLanguageModel
+
 class InterviewState(MessagesState):
+    llm: BaseLanguageModel # LLM to use
     max_num_turns: int # Number turns of conversation
     context: Annotated[list, operator.add] # Source docs
     analyst: Analyst # Analyst asking questions
@@ -118,10 +122,12 @@ class SearchQuery(BaseModel):
 
 question_instructions = prompts.question_instructions
 
-def generate_question(state: InterviewState, llm):
+def generate_question(state: InterviewState):
     """ Node to generate a question """
 
     # Get state
+    llm = state['llm']
+    print("LLM:", llm)
     analyst = state["analyst"]
     messages = state["messages"]
 
@@ -140,11 +146,12 @@ tavily_search = TavilySearchResults(max_results=3)
 
 search_instructions = SystemMessage(content=prompts.search_instructions)
 
-def search_web(state: InterviewState, llm):
+def search_web(state: InterviewState):
 
     """ Retrieve docs from web search """
 
     # Search query
+    llm = state['llm']
     structured_llm = llm.with_structured_output(SearchQuery)
     search_query = structured_llm.invoke([search_instructions]+state['messages'])
 
@@ -161,11 +168,12 @@ def search_web(state: InterviewState, llm):
 
     return {"context": [formatted_search_docs]}
 
-def search_wikipedia(state: InterviewState, llm):
+def search_wikipedia(state: InterviewState):
 
     """ Retrieve docs from wikipedia """
 
     # Search query
+    llm = state['llm']
     structured_llm = llm.with_structured_output(SearchQuery)
     search_query = structured_llm.invoke([search_instructions]+state['messages'])
 
@@ -184,11 +192,12 @@ def search_wikipedia(state: InterviewState, llm):
     return {"context": [formatted_search_docs]}
 
 answer_instructions = prompts.answer_instructions
-def generate_answer(state: InterviewState, llm):
+def generate_answer(state: InterviewState):
 
     """ Node to answer a question """
 
     # Get state
+    llm = state['llm']
     analyst = state["analyst"]
     messages = state["messages"]
     context = state["context"]
@@ -243,11 +252,12 @@ def route_messages(state: InterviewState,
     return "ask_question"
 
 section_writer_instructions = prompts.section_writer_instructions
-def write_section(state: InterviewState, llm):
+def write_section(state: InterviewState):
 
     """ Node to answer a question """
 
     # Get state
+    llm = state['llm']
     interview = state["interview"]
     context = state["context"]
     analyst = state["analyst"]
@@ -260,6 +270,14 @@ def write_section(state: InterviewState, llm):
     return {"sections": [section.content]}
 
 # Add nodes and edges
+"""
+interview_state: InterviewState = {
+    # ... other initial state values
+    "llm": llm,
+    # ...
+}
+"""
+
 interview_builder = StateGraph(InterviewState)
 interview_builder.add_node("ask_question", generate_question)
 interview_builder.add_node("search_web", search_web)
@@ -284,6 +302,7 @@ interview_graph = interview_builder.compile(checkpointer=memory).with_config(run
 
 
 class ResearchGraphState(TypedDict):
+    llm: BaseLanguageModel # LLM to use
     topic: str # Research topic
     max_analysts: int # Number of analysts
     human_analyst_feedback: str # Human feedback
@@ -315,8 +334,9 @@ def initiate_all_interviews(state: ResearchGraphState):
 
 report_writer_instructions = prompts.report_writer_instructions
 
-def write_report(state: ResearchGraphState, llm):
+def write_report(state: ResearchGraphState):
     # Full set of sections
+    llm = state['llm']
     sections = state["sections"]
     topic = state["topic"]
 
@@ -328,30 +348,11 @@ def write_report(state: ResearchGraphState, llm):
     report = llm.invoke([SystemMessage(content=system_message)]+[HumanMessage(content=f"Write a report based upon these memos.")])
     return {"content": report.content}
 
-intro_conclusion_instructions = """You are a technical writer finishing a report on {topic}
-
-You will be given all of the sections of the report.
-
-You job is to write a crisp and compelling introduction or conclusion section.
-
-The user will instruct you whether to write the introduction or conclusion.
-
-Include no pre-amble for either section.
-
-Target around 100 words, crisply previewing (for introduction) or recapping (for conclusion) all of the sections of the report.
-
-Use markdown formatting.
-
-For your introduction, create a compelling title and use the # header for the title.
-
-For your introduction, use ## Introduction as the section header.
-
-For your conclusion, use ## Conclusion as the section header.
-
-Here are the sections to reflect on for writing: {formatted_str_sections}"""
+intro_conclusion_instructions = prompts.intro_conclusion_instructions
 
 def write_introduction(state: ResearchGraphState):
     # Full set of sections
+    llm = state['llm']
     sections = state["sections"]
     topic = state["topic"]
 
@@ -366,6 +367,7 @@ def write_introduction(state: ResearchGraphState):
 
 def write_conclusion(state: ResearchGraphState):
     # Full set of sections
+    llm = state['llm']
     sections = state["sections"]
     topic = state["topic"]
 
@@ -398,6 +400,11 @@ def finalize_report(state: ResearchGraphState):
     return {"final_report": final_report}
 
 # Add nodes and edges
+research_state: ResearchGraphState = {
+    # ... other initial state values
+    "llm": llm,
+    # ...
+}
 builder = StateGraph(ResearchGraphState)
 builder.add_node("create_analysts", create_analysts)
 builder.add_node("human_feedback", human_feedback)
@@ -427,7 +434,7 @@ max_analysts = 3
 topic = "The history and development of LLMs"
 thread = {"configurable": {"thread_id": "1"}}
 #Run the graph until the first interruption
-for event in graph.stream({"topic":topic,
+for event in graph.stream({"llm": llm, "topic":topic,
                            "max_analysts":max_analysts},
                           thread,
                           stream_mode="values"):

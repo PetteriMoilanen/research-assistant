@@ -3,6 +3,8 @@ from typing import List
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langgraph.graph import START, END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -32,7 +34,19 @@ def _set_env_variables():
 _set_env_variables()
 
 def _get_llm():
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    #llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    #llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+    from langchain_groq import ChatGroq
+
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        temperature=0,
+        max_tokens=None,
+        timeout=None,
+        max_retries=2,
+        # other params...
+    )
+    
     return llm
 
 llm = _get_llm()
@@ -122,7 +136,7 @@ class SearchQuery(BaseModel):
 
 question_instructions = prompts.question_instructions
 
-def generate_question(state: InterviewState):
+async def generate_question(state: InterviewState):
     """ Node to generate a question """
 
     # Get state
@@ -133,7 +147,7 @@ def generate_question(state: InterviewState):
 
     # Generate question
     system_message = question_instructions.format(goals=analyst.persona)
-    question = llm.invoke([SystemMessage(content=system_message)]+messages)
+    question = await llm.ainvoke([SystemMessage(content=system_message)]+messages)
 
     # Write messages to state
     return {"messages": [question]}
@@ -146,17 +160,17 @@ tavily_search = TavilySearchResults(max_results=3)
 
 search_instructions = SystemMessage(content=prompts.search_instructions)
 
-def search_web(state: InterviewState):
+async def search_web(state: InterviewState):
 
     """ Retrieve docs from web search """
 
     # Search query
     llm = state['llm']
     structured_llm = llm.with_structured_output(SearchQuery)
-    search_query = structured_llm.invoke([search_instructions]+state['messages'])
+    search_query = await structured_llm.ainvoke([search_instructions]+state['messages'])
 
     # Search
-    search_docs = tavily_search.invoke(search_query.search_query)
+    search_docs = tavily_search.invoke(searcha_query.search_query)
 
      # Format
     formatted_search_docs = "\n\n---\n\n".join(
@@ -168,14 +182,14 @@ def search_web(state: InterviewState):
 
     return {"context": [formatted_search_docs]}
 
-def search_wikipedia(state: InterviewState):
+async def search_wikipedia(state: InterviewState):
 
     """ Retrieve docs from wikipedia """
 
     # Search query
     llm = state['llm']
     structured_llm = llm.with_structured_output(SearchQuery)
-    search_query = structured_llm.invoke([search_instructions]+state['messages'])
+    search_query = await structured_llm.ainvoke([search_instructions]+state['messages'])
 
     # Search
     search_docs = WikipediaLoader(query=search_query.search_query,
@@ -192,7 +206,7 @@ def search_wikipedia(state: InterviewState):
     return {"context": [formatted_search_docs]}
 
 answer_instructions = prompts.answer_instructions
-def generate_answer(state: InterviewState):
+async def generate_answer(state: InterviewState):
 
     """ Node to answer a question """
 
@@ -204,7 +218,7 @@ def generate_answer(state: InterviewState):
 
     # Answer question
     system_message = answer_instructions.format(goals=analyst.persona, context=context)
-    answer = llm.invoke([SystemMessage(content=system_message)]+messages)
+    answer = await llm.ainvoke([SystemMessage(content=system_message)]+messages)
 
     # Name the message as coming from the expert
     answer.name = "expert"
@@ -252,7 +266,8 @@ def route_messages(state: InterviewState,
     return "ask_question"
 
 section_writer_instructions = prompts.section_writer_instructions
-def write_section(state: InterviewState):
+
+async def write_section(state: InterviewState):
 
     """ Node to answer a question """
 
@@ -264,7 +279,7 @@ def write_section(state: InterviewState):
 
     # Write section using either the gathered source docs from interview (context) or the interview itself (interview)
     system_message = section_writer_instructions.format(focus=analyst.description)
-    section = llm.invoke([SystemMessage(content=system_message)]+[HumanMessage(content=f"Use this source to write your section: {context}")])
+    section = await llm.ainvoke([SystemMessage(content=system_message)]+[HumanMessage(content=f"Use this source to write your section: {context}")])
 
     # Append it to state
     return {"sections": [section.content]}
@@ -334,7 +349,7 @@ def initiate_all_interviews(state: ResearchGraphState):
 
 report_writer_instructions = prompts.report_writer_instructions
 
-def write_report(state: ResearchGraphState):
+async def write_report(state: ResearchGraphState):
     # Full set of sections
     llm = state['llm']
     sections = state["sections"]
@@ -345,12 +360,12 @@ def write_report(state: ResearchGraphState):
 
     # Summarize the sections into a final report
     system_message = report_writer_instructions.format(topic=topic, context=formatted_str_sections)
-    report = llm.invoke([SystemMessage(content=system_message)]+[HumanMessage(content=f"Write a report based upon these memos.")])
+    report = await llm.ainvoke([SystemMessage(content=system_message)]+[HumanMessage(content=f"Write a report based upon these memos.")])
     return {"content": report.content}
 
 intro_conclusion_instructions = prompts.intro_conclusion_instructions
 
-def write_introduction(state: ResearchGraphState):
+async def write_introduction(state: ResearchGraphState):
     # Full set of sections
     llm = state['llm']
     sections = state["sections"]
@@ -362,10 +377,10 @@ def write_introduction(state: ResearchGraphState):
     # Summarize the sections into a final report
 
     instructions = intro_conclusion_instructions.format(topic=topic, formatted_str_sections=formatted_str_sections)
-    intro = llm.invoke([instructions]+[HumanMessage(content=f"Write the report introduction")])
+    intro = await llm.ainvoke([instructions]+[HumanMessage(content=f"Write the report introduction")])
     return {"introduction": intro.content}
 
-def write_conclusion(state: ResearchGraphState):
+async def write_conclusion(state: ResearchGraphState):
     # Full set of sections
     llm = state['llm']
     sections = state["sections"]
@@ -377,10 +392,10 @@ def write_conclusion(state: ResearchGraphState):
     # Summarize the sections into a final report
 
     instructions = intro_conclusion_instructions.format(topic=topic, formatted_str_sections=formatted_str_sections)
-    conclusion = llm.invoke([instructions]+[HumanMessage(content=f"Write the report conclusion")])
+    conclusion = await llm.ainvoke([instructions]+[HumanMessage(content=f"Write the report conclusion")])
     return {"conclusion": conclusion.content}
 
-def finalize_report(state: ResearchGraphState):
+async def finalize_report(state: ResearchGraphState):
     """ The is the "reduce" step where we gather all the sections, combine them, and reflect on them to write the intro/conclusion """
     # Save full final report
     content = state["content"]
